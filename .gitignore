@@ -1,0 +1,18 @@
+﻿# Entorno virtual
+.venv/
+
+# Cache Python
+__pycache__/
+*.pyc
+
+# Datos pesados (datasets)
+raw/
+dataset/images/
+
+# Modelos entrenados (pesan)
+outputs/model.keras
+outputs/*.h5
+outputs/*.ckpt
+
+# Logs
+*.log
