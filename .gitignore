@@ -1,18 +1,21 @@
-﻿# Entorno virtual
+﻿# Entornos virtuales
+venv/
 .venv/
 
-# Cache Python
-__pycache__/
-*.pyc
+# MLflow (logs y BD)
+mlruns/
+mlflow.db
 
-# Datos pesados (datasets)
+# Datos pesados
 raw/
 dataset/images/
+test_images/
 
 # Modelos entrenados (pesan)
 outputs/model.keras
 outputs/*.h5
 outputs/*.ckpt
 
-# Logs
-*.log
+# Cache
+__pycache__/
+*.pyc

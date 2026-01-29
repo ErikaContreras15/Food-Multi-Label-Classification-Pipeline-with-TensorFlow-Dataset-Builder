@@ -5,12 +5,10 @@ import tensorflow as tf
 MODEL_PATH = "outputs/model.keras"
 IMG_SIZE = (224, 224)
 
-# ✅ Debe ser igual que en labels.csv y 2_train_multilabel.py
-CLASSES = ["leche", "arroz", "fruta"]
+CLASSES = ["lacteos", "arroz", "frutas/verduras"]
 
-# Umbrales
-THRESH = 0.50            # umbral por clase
-NONE_IF_MAX_BELOW = 0.45 # si ninguna pasa THRESH y max<esto => "NINGUNO"
+THRESH = 0.50
+NONE_IF_MAX_BELOW = 0.45
 
 
 def load_img(path):
@@ -27,7 +25,6 @@ def main():
         return
 
     image_path = sys.argv[1]
-
     model = tf.keras.models.load_model(MODEL_PATH)
 
     x = load_img(image_path)
@@ -41,10 +38,10 @@ def main():
     labels = [c for c, p in zip(CLASSES, probs) if p >= THRESH]
 
     if not labels and float(np.max(probs)) < NONE_IF_MAX_BELOW:
-        print("\n✅ Resultado FINAL: NINGUNO (no hay producto)")
+        print("\n✅ Resultado FINAL: No encontrado / No pertenece")
     elif not labels:
         best = CLASSES[int(np.argmax(probs))]
-        print(f"\n⚠️ Resultado FINAL: INCIERTO (más probable: {best})")
+        print(f"\n⚠️ Resultado FINAL: Incierto (más probable: {best})")
     else:
         print("\n✅ Resultado FINAL:", ", ".join(labels))
 
