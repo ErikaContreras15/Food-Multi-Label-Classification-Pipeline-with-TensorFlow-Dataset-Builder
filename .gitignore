@@ -19,3 +19,6 @@ outputs/*.ckpt
 # Cache
 __pycache__/
 *.pyc
+
+flask_app/static/uploads/
+

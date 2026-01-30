@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Detector de Comida</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+<body>
+  <div class="wrapper">
+    <div class="card">
+      <div class="card-header">🍽️  Detector de Comida (Multilabel) 🍽️</div>
+
+      <div class="card-body">
+        <div class="subtitle">Sube las fotos que desees analizar</div>
+
+        <form method="POST" enctype="multipart/form-data">
+          <div class="upload-row">
+            <div class="mode-box">
+              <div class="mode-title">Modo de carga</div>
+              <label class="mode-opt">
+                <input type="radio" name="mode" value="one" checked>
+                <span>Solo 1</span>
+              </label>
+              <label class="mode-opt">
+                <input type="radio" name="mode" value="many">
+                <span>Varias</span>
+              </label>
+            </div>
+
+            <!-- input que cambia entre uno / varios -->
+            <input id="fileInput" class="file-input" type="file" name="image" accept="image/*">
+          </div>
+
+          <div style="text-align:center; margin-top:12px;">
+            <button class="btn" type="submit">🚀 Analizar Imágenes</button>
+          </div>
+
+          <div class="hint">
+            Se acepta los siguientes formatos: JPG, PNG, WEBP 
+          </div>
+        </form>
+
+        {% if error %}
+          <p class="err">{{ error }}</p>
+        {% endif %}
+
+        <div class="hr"></div>
+        <div class="section-title">📊 Resultados</div>
+
+        {% if results and results|length > 0 %}
+          {% for r in results %}
+            <div class="result-card">
+              {% if r.ok %}
+                <div class="thumb">
+                  <img src="{{ r.image_url }}" alt="preview">
+                </div>
+                <div class="result-meta">
+                  <div class="filename">{{ r.filename }}</div>
+
+                  <div class="chips">
+                    {% for cls, p in r.probs.items() %}
+                      {% if p >= thresh %}
+                        <span class="chip on">{{ cls }}</span>
+                      {% endif %}
+                    {% endfor %}
+                    {% if r.status == "none" %}
+                      <span class="chip none">La imagen no pertecene a la categoria de comida</span>
+                    {% elif r.status == "uncertain" %}
+                      <span class="chip uncertain">La imagen no pertecene a la categoria de comida</span>
+                    {% endif %}
+                  </div>
+
+                  <div class="final">
+                    <b>En la imagen se observa:</b> {{ r.final }}
+                  </div>
+
+                  <div class="details">
+                    <div class="details-title">Detalles:</div>
+                    {% for cls, p in r.probs.items() %}
+                      <div class="detail-line">
+                        
+                        <span class="cls">{{ cls }}</span>
+                        <span class="pct">{{ (p*100) | round(2) }}%</span>
+                      </div>
+                    {% endfor %}
+                  </div>
+                </div>
+              {% else %}
+                <div class="result-meta">
+                  <div class="filename">{{ r.filename }}</div>
+                  <p class="err">{{ r.error }}</p>
+                </div>
+              {% endif %}
+            </div>
+          {% endfor %}
+        {% else %}
+          <p class="muted" style="text-align:center;">Todavía no hay resultados.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Cambia input entre 1 y varias imágenes
+    const fileInput = document.getElementById("fileInput");
+    const radios = document.querySelectorAll("input[name='mode']");
+
+    function applyMode(){
+      const mode = document.querySelector("input[name='mode']:checked").value;
+      if(mode === "many"){
+        fileInput.setAttribute("multiple", "multiple");
+        fileInput.setAttribute("name", "images");
+      }else{
+        fileInput.removeAttribute("multiple");
+        fileInput.setAttribute("name", "image");
+      }
+    }
+
+    radios.forEach(r => r.addEventListener("change", applyMode));
+    applyMode();
+  </script>
+</body>
+</html>
