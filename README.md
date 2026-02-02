@@ -8,7 +8,7 @@ This repository implements a complete end-to-end pipeline to:
 4) Run predictions on images (single image inference)  
 5) Deploy a simple **Flask web interface** to upload and analyze images visually  
 
----
+---a
 
 ## 1) Project Overview
 
