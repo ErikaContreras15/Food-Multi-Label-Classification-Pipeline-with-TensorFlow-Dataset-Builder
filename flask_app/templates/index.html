@@ -1,125 +1,258 @@
 <!doctype html>
-<html lang="es">
+<html lang="{{ lang|default('es') }}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Detector de Comida</title>
+  <title>{{ ui.hero_title }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-
 <body>
-  <div class="wrapper">
-    <div class="card">
-      <div class="card-header">🍽️  Detector de Comida (Multilabel) 🍽️</div>
 
-      <div class="card-body">
-        <div class="subtitle">Sube las fotos que desees analizar</div>
+  <!-- Navbar -->
+  <header class="topbar">
+    <div class="container topbar__inner">
+      <div class="brand">
+        <div class="brand__logo">🍽️</div>
+        <div class="brand__name">{{ ui.brand }}</div>
+      </div>
 
-        <form method="POST" enctype="multipart/form-data">
-          <div class="upload-row">
-            <div class="mode-box">
-              <div class="mode-title">Modo de carga</div>
-              <label class="mode-opt">
-                <input type="radio" name="mode" value="one" checked>
-                <span>Solo 1</span>
-              </label>
-              <label class="mode-opt">
-                <input type="radio" name="mode" value="many">
-                <span>Varias</span>
-              </label>
-            </div>
+      <nav class="nav">
+        <a href="#" class="nav__link active">{{ ui.nav_home }}</a>
+        <a href="#" class="nav__link">{{ ui.nav_inspo }}</a>
+        <a href="#" class="nav__link">{{ ui.nav_tutorials }}</a>
+        <a href="#" class="nav__link">{{ ui.nav_tools }}</a>
+        <a href="#" class="nav__link">{{ ui.nav_pricing }}</a>
+      </nav>
 
-            <!-- input que cambia entre uno / varios -->
-            <input id="fileInput" class="file-input" type="file" name="image" accept="image/*">
-          </div>
-
-          <div style="text-align:center; margin-top:12px;">
-            <button class="btn" type="submit">🚀 Analizar Imágenes</button>
-          </div>
-
-          <div class="hint">
-            Se acepta los siguientes formatos: JPG, PNG, WEBP 
-          </div>
-        </form>
-
-        {% if error %}
-          <p class="err">{{ error }}</p>
-        {% endif %}
-
-        <div class="hr"></div>
-        <div class="section-title">📊 Resultados</div>
-
-        {% if results and results|length > 0 %}
-          {% for r in results %}
-            <div class="result-card">
-              {% if r.ok %}
-                <div class="thumb">
-                  <img src="{{ r.image_url }}" alt="preview">
-                </div>
-                <div class="result-meta">
-                  <div class="filename">{{ r.filename }}</div>
-
-                  <div class="chips">
-                    {% for cls, p in r.probs.items() %}
-                      {% if p >= thresh %}
-                        <span class="chip on">{{ cls }}</span>
-                      {% endif %}
-                    {% endfor %}
-                    {% if r.status == "none" %}
-                      <span class="chip none">La imagen no pertecene a la categoria de comida</span>
-                    {% elif r.status == "uncertain" %}
-                      <span class="chip uncertain">La imagen no pertecene a la categoria de comida</span>
-                    {% endif %}
-                  </div>
-
-                  <div class="final">
-                    <b>En la imagen se observa:</b> {{ r.final }}
-                  </div>
-
-                  <div class="details">
-                    <div class="details-title">Detalles:</div>
-                    {% for cls, p in r.probs.items() %}
-                      <div class="detail-line">
-                        
-                        <span class="cls">{{ cls }}</span>
-                        <span class="pct">{{ (p*100) | round(2) }}%</span>
-                      </div>
-                    {% endfor %}
-                  </div>
-                </div>
-              {% else %}
-                <div class="result-meta">
-                  <div class="filename">{{ r.filename }}</div>
-                  <p class="err">{{ r.error }}</p>
-                </div>
-              {% endif %}
-            </div>
-          {% endfor %}
-        {% else %}
-          <p class="muted" style="text-align:center;">Todavía no hay resultados.</p>
-        {% endif %}
+      <div class="topbar__actions">
+        <button class="btn btn--ghost" type="button">{{ ui.btn_feedback }}</button>
+        <button class="btn btn--primary" type="button">{{ ui.btn_login }}</button>
       </div>
     </div>
+  </header>
+
+  <!-- Hero -->
+  <main class="container">
+    <section class="hero">
+      <h1>{{ ui.hero_title }} <span class="muted"></span></h1>
+      <p class="hero__sub">
+        {{ ui.hero_sub }}
+      </p>
+    </section>
+
+    <!-- Card principal -->
+    <section class="card">
+      <div class="card__header">
+        <div class="tabs" role="tablist">
+          <button class="tab active" data-tab="upload" type="button">{{ ui.tab_upload }}</button>
+          <button class="tab" data-tab="info" type="button">{{ ui.tab_info }}</button>
+        </div>
+
+        <div class="controls">
+          <label class="label" for="lang">{{ ui.lang_label }}</label>
+          <select id="lang" name="lang" class="select">
+            <option value="es" {% if lang != 'en' %}selected{% endif %}>{{ ui.lang_es }}</option>
+            <option value="en" {% if lang == 'en' %}selected{% endif %}>{{ ui.lang_en }}</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="card__body">
+        <div class="grid">
+
+          <!-- Izquierda: input -->
+          <div class="panel">
+            <form id="formPredict" class="form" method="POST" action="/" enctype="multipart/form-data">
+
+              <!-- UPLOAD -->
+              <div class="tabpane show" data-pane="upload">
+                <div class="dropzone" id="dropzone">
+                  <input id="file" name="file" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+
+                  <div class="dropzone__icon">🖼️</div>
+                  <div class="dropzone__title">{{ ui.dz_title }}</div>
+                  <div class="dropzone__hint">{{ ui.dz_hint }}</div>
+
+                  <button class="btn btn--secondary" type="button" id="btnPick">{{ ui.dz_pick }}</button>
+                </div>
+
+                <div class="row">
+                  <label class="label">{{ ui.mode_label }}</label>
+                  <div class="radioGroup">
+                    <label class="radio"><input type="radio" name="mode" value="single" checked> {{ ui.mode_single }}</label>
+                    <label class="radio"><input type="radio" name="mode" value="multi"> {{ ui.mode_multi }}</label>
+                  </div>
+                </div>
+
+                <input type="hidden" name="lang" id="langHidden" value="{{ lang|default('es') }}">
+
+                <button class="btn btn--cta" type="submit">
+                  {{ ui.btn_analyze }}
+                </button>
+
+                <p class="helper">{{ ui.formats_hint }}</p>
+              </div>
+
+              <!-- INFO -->
+              <div class="tabpane" data-pane="info">
+                <div class="infoBox">
+                  <h3>{{ ui.info_title }}</h3>
+                  <p>{{ ui.info_p1 }}</p>
+                  <p>{{ ui.info_p2 }}</p>
+                  <p class="muted">{{ ui.info_p3.format(thresh=thresh, none_if_max_below=none_if_max_below) }}</p>
+                </div>
+              </div>
+
+            </form>
+          </div>
+
+          <!-- Derecha: preview -->
+          <div class="panel">
+            <div class="preview">
+              <div class="preview__title">{{ ui.preview_title }}</div>
+              <div class="preview__box">
+                <img id="previewImg" alt="preview" />
+                <div id="previewEmpty" class="preview__empty">
+                  <div class="preview__emptyIcon">🧾</div>
+                  <div>{{ ui.preview_empty }}</div>
+                </div>
+              </div>
+              <div class="filemeta" id="filemeta"></div>
+            </div>
+          </div>
+
+        </div>
+        <!-- Resultados -->
+<div class="results">
+  <div class="results__header">
+    <h2>{{ ui.results_title }}</h2>
   </div>
 
-  <script>
-    // Cambia input entre 1 y varias imágenes
-    const fileInput = document.getElementById("fileInput");
-    const radios = document.querySelectorAll("input[name='mode']");
+  {% if error %}
+    <div class="resultBox mutedBox">❌ {{ error }}</div>
+  {% endif %}
 
-    function applyMode(){
-      const mode = document.querySelector("input[name='mode']:checked").value;
-      if(mode === "many"){
-        fileInput.setAttribute("multiple", "multiple");
-        fileInput.setAttribute("name", "images");
-      }else{
-        fileInput.removeAttribute("multiple");
-        fileInput.setAttribute("name", "image");
-      }
+  {% if results and results|length > 0 %}
+    {% for r in results %}
+      <div class="resultBox" style="margin-top:12px;">
+        <div style="display:flex; gap:14px; align-items:flex-start; flex-wrap:wrap;">
+
+          {% if r.ok %}
+            <img src="{{ r.image_url }}" alt="img"
+                 style="width:140px;height:140px;object-fit:cover;border-radius:14px;border:1px solid #e4e7ec;">
+          {% endif %}
+
+          <div style="flex:1; min-width:260px;">
+            <div style="font-weight:900; margin-bottom:8px;">{{ r.filename }}</div>
+
+            {% if not r.ok %}
+              <div class="badge warn">⚠️ Error</div>
+              <p class="muted">{{ r.error }}</p>
+            {% else %}
+              <div class="badge {{ 'ok' if r.status == 'ok' else 'warn' }}">{{ r.badge_text }}</div>
+              <p><b>{{ r.seen_text }}</b> {{ r.final }}</p>
+
+              {# SOLO mostrar scores si NO es "none" #}
+              {% if r.status != "none" %}
+                <div class="scores">
+                  {% for k,v in r.probs.items() %}
+                    <div class="score">
+                      <div class="score__name">{{ k }}</div>
+                      <div class="score__bar">
+                        <span style="width: {{ (v*100)|round(2) }}%"></span>
+                      </div>
+                      <div class="score__val">{{ (v*100)|round(2) }}%</div>
+                    </div>
+                  {% endfor %}
+                </div>
+              {% endif %}
+
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  {% else %}
+    <div class="resultBox mutedBox">
+      {{ ui.results_empty }}
+    </div>
+  {% endif %}
+</div>
+
+
+        
+  </main>
+
+<script>
+  // Tabs
+  const tabs = document.querySelectorAll(".tab");
+  const panes = document.querySelectorAll(".tabpane");
+  tabs.forEach(t => t.addEventListener("click", () => {
+    tabs.forEach(x => x.classList.remove("active"));
+    t.classList.add("active");
+    const id = t.dataset.tab;
+    panes.forEach(p => p.classList.toggle("show", p.dataset.pane === id));
+  }));
+
+  // Idioma -> hidden
+  const lang = document.getElementById("lang");
+  const langHidden = document.getElementById("langHidden");
+  lang.addEventListener("change", ()=> langHidden.value = lang.value);
+
+  // Dropzone + preview
+  const fileInput = document.getElementById("file");
+  const btnPick = document.getElementById("btnPick");
+  const dropzone = document.getElementById("dropzone");
+  const previewImg = document.getElementById("previewImg");
+  const previewEmpty = document.getElementById("previewEmpty");
+  const filemeta = document.getElementById("filemeta");
+
+  btnPick.addEventListener("click", () => fileInput.click());
+
+  function setPreview(file){
+    if(!file) return;
+    const url = URL.createObjectURL(file);
+    previewImg.src = url;
+    previewImg.style.display = "block";
+    previewEmpty.style.display = "none";
+    filemeta.textContent = `${file.name} • ${(file.size/1024/1024).toFixed(2)} MB`;
+  }
+
+  fileInput.addEventListener("change", e => setPreview(e.target.files[0]));
+
+  ["dragenter","dragover"].forEach(evt => dropzone.addEventListener(evt, (e)=>{
+    e.preventDefault(); e.stopPropagation();
+    dropzone.classList.add("drag");
+  }));
+
+  ["dragleave","drop"].forEach(evt => dropzone.addEventListener(evt, (e)=>{
+    e.preventDefault(); e.stopPropagation();
+    dropzone.classList.remove("drag");
+  }));
+
+  dropzone.addEventListener("drop", (e)=>{
+    const files = e.dataTransfer.files;
+    if(!files || files.length === 0) return;
+    fileInput.files = files;
+    setPreview(files[0]);
+  });
+
+  // Single/Multi: cambia name + multiple (para que el backend reciba correcto)
+  const radios = document.querySelectorAll('input[name="mode"]');
+
+  function syncMultiple(){
+    const mode = document.querySelector('input[name="mode"]:checked')?.value || "single";
+    if(mode === "multi"){
+      fileInput.setAttribute("multiple","multiple");
+      fileInput.setAttribute("name","images");
+    }else{
+      fileInput.removeAttribute("multiple");
+      fileInput.setAttribute("name","file");
     }
+  }
+  radios.forEach(r=> r.addEventListener("change", syncMultiple));
+  syncMultiple();
+</script>
 
-    radios.forEach(r => r.addEventListener("change", applyMode));
-    applyMode();
-  </script>
 </body>
 </html>

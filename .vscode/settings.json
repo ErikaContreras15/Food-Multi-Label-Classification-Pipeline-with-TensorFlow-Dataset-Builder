@@ -1,0 +1,28 @@
+{
+  "python.analysis.indexing": false,
+  "python.analysis.typeCheckingMode": "off",
+
+  "files.watcherExclude": {
+    "**/.git/**": true,
+    "**/node_modules/**": true,
+    "**/venv/**": true,
+    "**/.venv/**": true,
+    "**/__pycache__/**": true,
+    "**/.pytest_cache/**": true,
+    "**/mlruns/**": true,
+    "**/outputs/**": true,
+    "**/dataset/**": true
+  },
+
+  "search.exclude": {
+    "**/venv": true,
+    "**/.venv": true,
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/mlruns": true,
+    "**/outputs": true,
+    "**/dataset": true
+  },
+
+  "jupyter.logging.level": "error"
+}
