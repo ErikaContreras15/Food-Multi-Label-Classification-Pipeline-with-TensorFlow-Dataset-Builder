@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>Multilabel Dataset Builder + MobileNetV2 Training + MLflow Tracking + Flask Web UI</strong>
+  <strong>Multilabel Dataset Builder + MobileNetV2 Training + MLflow Tracking + Flask Web UI + Incremental Retraining</strong>
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
 
 ## Overview
 
-This repository implements a **complete end-to-end pipeline** for multilabel food image classification:
+This repository implements a **complete end-to-end pipeline** for multilabel food image classification with **incremental retraining capabilities**:
 
 | Step | Description |
 |------|-------------|
@@ -26,6 +26,7 @@ This repository implements a **complete end-to-end pipeline** for multilabel foo
 | 3 | Track experiments and metrics with **MLflow** |
 | 4 | Run predictions on images (single image inference) |
 | 5 | Deploy a **Flask web interface** for visual analysis |
+| 6 | **Collect user corrections** and retrain incrementally |
 
 ---
 
@@ -80,20 +81,32 @@ Food-Multi-Label-Classification-Pipeline/
 │   ├── images/
 │   └── labels.csv
 │
-├── outputs/                                # Notebooks and trained model
+├── notebooks/                              # Jupyter Notebooks
 │   ├── 1_prepare_dataset_multilabel_real.ipynb
-│   ├── 2_train_multilabel.ipynb
-│   ├── 3_predict_image_multilabel.ipynb
+│   ├── 2_train_multilabel (1).ipynb
+│   └── predict_image_multilabel.ipynb
+│
+├── outputs/                                # Trained model
 │   └── model.keras
+│
+├── corrections/                            # Incremental retraining system
+│   ├── pending.csv                         # User corrections awaiting retraining
+│   ├── history/                            # Archived corrections from past retrains
+│   └── retraining_status.txt               # Current retraining status
 │
 ├── mlruns/                                 # MLflow experiment logs (auto)
 │
-└── flask_app/                              # Web application
-    ├── app.py
-    ├── templates/index.html
-    └── static/
-        ├── style.css
-        └── uploads/
+├── flask_app/                              # Web application
+│   ├── app.py                              # Main Flask API
+│   ├── retrain_service.py                  # Incremental retraining service
+│   ├── templates/
+│   │   └── index.html
+│   └── static/
+│       ├── style.css
+│       └── uploads/
+│
+├── sync_labels.py                          # Sync new images to labels.csv
+└── test_model.py                           # Quick model testing script
 ```
 
 ---
@@ -120,7 +133,7 @@ pip install tensorflow pandas numpy pillow scikit-learn mlflow flask
 
 ### Step 1: Dataset Preparation
 
-**Notebook:** `outputs/1_prepare_dataset_multilabel_real.ipynb`
+**Notebook:** `notebooks/1_prepare_dataset_multilabel_real.ipynb`
 
 Generates a multilabel dataset by creating **collage images** that combine multiple food categories.
 
@@ -149,7 +162,7 @@ Generates a multilabel dataset by creating **collage images** that combine multi
 
 ### Step 2: Model Training
 
-**Notebook:** `outputs/2_train_multilabel.ipynb`
+**Notebook:** `notebooks/2_train_multilabel (1).ipynb`
 
 Uses **transfer learning** with MobileNetV2 pretrained on ImageNet.
 
@@ -195,7 +208,7 @@ mlflow ui
 
 ### Step 3: Single Image Prediction
 
-**Notebook:** `outputs/3_predict_image_multilabel.ipynb`
+**Notebook:** `notebooks/predict_image_multilabel.ipynb`
 
 **Prediction Pipeline:**
 
@@ -248,10 +261,124 @@ python app.py
 ```
 
 **Features:**
-- Upload images via web form
-- Display uploaded image preview
-- Show per-class probabilities
-- Display final multilabel prediction
+
+- **Multi-image upload** via web form (JPG, PNG, WEBP)
+- **Real-time predictions** with probability visualization
+- **Internationalization** (English/Spanish)
+- **Correction submission** for model improvement
+- **Automatic retraining** when enough corrections accumulate
+
+**API Endpoints:**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET/POST | Main page with image upload and prediction |
+| `/correct_labels` | POST | Submit correction for a prediction |
+| `/trigger_retrain` | POST | Manually trigger retraining |
+| `/retrain_status` | GET | Check retraining status |
+
+---
+
+### Step 5: Incremental Retraining System
+
+**Service:** `flask_app/retrain_service.py`
+
+The system implements a **feedback loop** where user corrections automatically improve the model.
+
+**How It Works:**
+
+1. **User corrects** a wrong prediction via the web UI
+2. Correction is saved to `corrections/pending.csv`
+3. When **10+ corrections** accumulate, retraining is triggered
+4. Model is **fine-tuned** on:
+   - Sample of original dataset (200 images)
+   - User corrections (repeated 25x for emphasis)
+5. Updated model replaces the old one
+6. Corrections are archived to `corrections/history/`
+
+**Configuration:**
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `MIN_CORRECTIONS` | 10 | Minimum corrections to trigger retraining |
+| `SAMPLE_ORIGINAL` | 200 | Images sampled from original dataset |
+| `BOOST_FACTOR` | 25 | Repetition factor for corrections |
+| `EPOCHS` | 3 | Fine-tuning epochs |
+| `LEARNING_RATE` | 1e-5 | Very low LR to avoid catastrophic forgetting |
+| `UNFREEZE_LAYERS` | 15 | Number of backbone layers to unfreeze |
+
+**Retraining Strategy:**
+
+- **Conservative fine-tuning**: Only unfreezes last 15 layers (vs 30 in initial training)
+- **Low learning rate**: 1e-5 to preserve learned features
+- **Balanced dataset**: Combines original samples with boosted corrections
+- **Non-blocking**: Runs in background thread
+
+**Status Tracking:**
+
+```bash
+# Check retraining status
+cat corrections/retraining_status.txt
+
+# Example output:
+STATUS:idle
+Waiting for corrections... (7/10)
+```
+
+---
+
+## Support Scripts
+
+### sync_labels.py
+
+Synchronizes new images in `dataset/images/` with `dataset/labels.csv`.
+
+**Usage:**
+
+```bash
+# Generate pending.csv with unlabeled images
+python sync_labels.py
+
+# Directly append to labels.csv (with 0s)
+python sync_labels.py --merge
+
+# Custom paths
+python sync_labels.py --labels_csv dataset/labels.csv \
+                      --images_dir dataset/images \
+                      --pending_csv dataset/labels_pending.csv
+```
+
+**Workflow:**
+
+1. Scans `dataset/images/` for image files
+2. Compares with existing entries in `labels.csv`
+3. Generates `labels_pending.csv` with missing images
+4. User manually edits pending file to add correct labels
+5. Optionally merges into `labels.csv` with `--merge` flag
+
+---
+
+### test_model.py
+
+Quick script for testing the model on a single image.
+
+**Usage:**
+
+```python
+# Edit image path in script
+img_path = r"C:\path\to\image.png"
+
+# Run
+python test_model.py
+```
+
+**Example Output:**
+
+```
+Pred: {'lacteos': 0.9294, 'arroz': 0.0233, 'frutas/verduras': 0.9995}
+Max: frutas/verduras => 0.9995
+✅ FINAL: ['lacteos', 'frutas/verduras']
+```
 
 ---
 
@@ -265,15 +392,52 @@ cd Food-Multi-Label-Classification-Pipeline
 # 2. Install dependencies
 pip install tensorflow pandas numpy pillow scikit-learn mlflow flask
 
-# 3. Download datasets from Kaggle and place in raw/
+# 3. Download datasets from Kaggle
+# - Food-11: https://www.kaggle.com/datasets/trolukovich/food11-image-dataset
+# - FoodOrNot: https://www.kaggle.com/datasets/sciencelabwork/food-or-not-dataset
+# Place in raw/ directory
 
 # 4. Run notebooks in order:
-#    - 1_prepare_dataset_multilabel_real.ipynb
-#    - 2_train_multilabel.ipynb
-#    - 3_predict_image_multilabel.ipynb
+jupyter notebook notebooks/1_prepare_dataset_multilabel_real.ipynb
+jupyter notebook notebooks/2_train_multilabel\ \(1\).ipynb
+jupyter notebook notebooks/predict_image_multilabel.ipynb
 
-# 5. (Optional) Launch web interface
-cd flask_app && python app.py
+# 5. (Optional) View MLflow experiments
+mlflow ui
+# Open http://localhost:5000
+
+# 6. Launch web application
+cd flask_app
+python app.py
+# Open http://localhost:5000
+
+# 7. Use the web UI to:
+#    - Upload images for prediction
+#    - Submit corrections when predictions are wrong
+#    - Trigger retraining when 10+ corrections accumulate
+```
+
+---
+
+## Complete Workflow: From Training to Retraining
+
+```mermaid
+graph TD
+    A[Download Datasets] --> B[Run Notebook 1: Prepare Dataset]
+    B --> C[Run Notebook 2: Train Model]
+    C --> D[Run Notebook 3: Test Predictions]
+    D --> E[Launch Flask App]
+    E --> F[Upload Images]
+    F --> G[Get Predictions]
+    G --> H{Prediction Correct?}
+    H -->|Yes| F
+    H -->|No| I[Submit Correction]
+    I --> J{10+ Corrections?}
+    J -->|No| F
+    J -->|Yes| K[Trigger Retraining]
+    K --> L[Model Fine-tuned]
+    L --> M[Model Reloaded]
+    M --> F
 ```
 
 ---
@@ -289,12 +453,13 @@ cd flask_app && python app.py
 | **Non-food negatives** | Reduces false positives, improves rejection capability |
 | **Sample weighting (NEG_WEIGHT=4.0)** | Penalizes false positives on NONE samples |
 | **Two-stage training** | Head-only first, then fine-tune for better convergence |
+| **Conservative retraining** | Unfreezes fewer layers (15 vs 30) to avoid forgetting |
+| **Correction boosting** | Repeats corrections 25x to emphasize user feedback |
+| **Low LR retraining** | 1e-5 vs 1e-4 to preserve learned features |
 
 ---
 
-## Conclusion: Why This Project Matters
-
-### Real-World Applications
+## Real-World Applications
 
 This pipeline can be adapted for various practical use cases:
 
@@ -306,7 +471,9 @@ This pipeline can be adapted for various practical use cases:
 | **Healthcare** | Monitor patient meals for dietary compliance |
 | **Food Delivery QA** | Validate order contents through image analysis |
 
-### Educational Value
+---
+
+## Educational Value
 
 This project demonstrates key concepts in modern deep learning:
 
@@ -319,18 +486,26 @@ This project demonstrates key concepts in modern deep learning:
 | **Experiment Tracking** | MLflow for reproducible ML experiments |
 | **Model Deployment** | Flask web application for inference |
 | **Two-Stage Training** | Head training + fine-tuning strategy |
+| **Incremental Learning** | User feedback loop with conservative retraining |
+| **Active Learning** | Collecting corrections on difficult examples |
 
-### Technical Achievements
+---
+
+## Technical Achievements
 
 | Metric | Value |
 |--------|-------|
 | **Validation Accuracy** | 95.43% |
 | **Validation AUC** | 0.9915 |
 | **Model Size** | ~8.6 MB (MobileNetV2) |
+| **Inference Time** | < 100ms (CPU) |
 | **Inference Ready** | Yes (Keras .keras format) |
 | **Web Deployment** | Flask application included |
+| **Incremental Learning** | Automated retraining system |
 
-### Why Multilabel Matters
+---
+
+## Why Multilabel Matters
 
 Unlike traditional multiclass classification (one label per image), **multilabel classification** is essential for real-world scenarios where:
 
@@ -341,3 +516,28 @@ Unlike traditional multiclass classification (one label per image), **multilabel
 This approach mirrors how humans perceive food - rarely do we see isolated ingredients; instead, we see complete dishes with multiple components.
 
 ---
+
+## Future Improvements
+
+- **Expand classes**: Add more food categories
+- **Object detection**: Integrate YOLO for localization
+- **Model optimization**: Quantization for mobile deployment
+- **Database backend**: Replace CSV with proper database
+- **Queue system**: Use Celery for async retraining
+- **A/B testing**: Compare model versions in production
+- **Grad-CAM visualization**: Show what the model is looking at
+
+---
+
+## License
+
+This project is developed as part of academic research at Universidad Politecnica Salesiana.
+
+---
+
+## Authors
+
+- **Erika Contreras**
+- **Alexander Chuquipoma**
+
+**Institution:** Universidad Politecnica Salesiana
