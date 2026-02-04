@@ -10,7 +10,7 @@
 
 <p align="center">
   <b>Authors:</b> Erika Contreras, Alexander Chuquipoma<br>
-  <b>Institution:</b> Universidad Salesiana
+  <b>Institution:</b> Universidad Politecnica Salesiana
 </p>
 
 ---
