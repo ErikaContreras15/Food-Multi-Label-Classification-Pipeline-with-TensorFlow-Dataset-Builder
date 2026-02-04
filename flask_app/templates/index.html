@@ -4,10 +4,76 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>{{ ui.hero_title }}</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-<body>
 
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
+  <style>
+    .correction-btn{
+      background:#4361ee;color:#fff;border:none;padding:8px 16px;border-radius:8px;
+      cursor:pointer;font-weight:600;margin-top:12px;transition:.2s;
+    }
+    .correction-btn:hover{background:#3a56d4;transform:translateY(-2px);}
+
+    .modal{
+      display:none; position:fixed; inset:0; background:rgba(0,0,0,.7);
+      z-index:1000; align-items:center; justify-content:center;
+    }
+    .modal.show{display:flex;}
+    .modal-content{
+      background:#fff; padding:28px; border-radius:16px; max-width:520px; width:92%;
+      box-shadow:0 10px 40px rgba(0,0,0,.3);
+    }
+    .modal-title{font-size:20px;font-weight:800;margin:0 0 8px;color:#2b2d42;}
+
+    .checkbox-group{display:flex;flex-direction:column;gap:10px;margin:16px 0 18px;}
+    .checkbox-item{
+      display:flex;align-items:center;gap:10px;padding:12px;background:#f8f9fa;border-radius:10px;
+      cursor:pointer; user-select:none;
+    }
+    .checkbox-item:hover{background:#e9ecef;}
+    .checkbox-item input{width:20px;height:20px;cursor:pointer;}
+
+    .modal-buttons{display:flex;gap:10px;justify-content:flex-end;}
+    .btn-modal{padding:10px 18px;border-radius:10px;font-weight:700;border:none;cursor:pointer;}
+    .btn-modal-cancel{background:#e9ecef;color:#495057;}
+    .btn-modal-submit{background:#28a745;color:#fff;}
+
+    .retrain-status{
+      background:#f8f9fa;padding:20px;border-radius:12px;margin-top:24px;border-left:4px solid #4361ee;
+    }
+    .retrain-status h3{margin:0 0 10px;color:#2b2d42;}
+    .status-badge{
+      display:inline-block;padding:6px 12px;border-radius:8px;font-weight:800;font-size:13px;
+    }
+    .status-badge.idle{background:#e9ecef;color:#6c757d;}
+    .status-badge.ready{background:#28a745;color:#fff;}
+    .status-badge.in-progress{background:#ffc107;color:#212529;}
+    .status-badge.completed{background:#17a2b8;color:#fff;}
+
+    .retrain-btn{
+      background:#28a745;color:#fff;border:none;padding:10px 18px;border-radius:10px;
+      font-weight:800;cursor:pointer;margin-top:12px;transition:.2s;
+    }
+    .retrain-btn:hover{background:#218838;transform:translateY(-2px);}
+    .retrain-btn:disabled{background:#6c757d;cursor:not-allowed;transform:none;}
+
+    .correction-success{
+      background:#d4edda;color:#155724;padding:10px;border-radius:10px;margin-top:12px;display:none;
+    }
+    .correction-error{
+      background:#f8d7da;color:#721c24;padding:10px;border-radius:10px;margin-top:12px;display:none;
+    }
+
+    .progress-bar{width:100%;height:8px;background:#e9ecef;border-radius:999px;overflow:hidden;margin-top:10px;}
+    .progress-bar-fill{height:100%;background:#4361ee;width:0%;transition:width .25s;}
+
+    .correction-info{
+      background:#e7f3ff;border-left:4px solid #2196F3;padding:12px;margin-top:12px;border-radius:8px;font-size:14px;
+    }
+  </style>
+</head>
+
+<body>
   <!-- Navbar -->
   <header class="topbar">
     <div class="container topbar__inner">
@@ -31,16 +97,12 @@
     </div>
   </header>
 
-  <!-- Hero -->
   <main class="container">
     <section class="hero">
-      <h1>{{ ui.hero_title }} <span class="muted"></span></h1>
-      <p class="hero__sub">
-        {{ ui.hero_sub }}
-      </p>
+      <h1>{{ ui.hero_title }}</h1>
+      <p class="hero__sub">{{ ui.hero_sub }}</p>
     </section>
 
-    <!-- Card principal -->
     <section class="card">
       <div class="card__header">
         <div class="tabs" role="tablist">
@@ -59,20 +121,16 @@
 
       <div class="card__body">
         <div class="grid">
-
-          <!-- Izquierda: input -->
+          <!-- Izquierda -->
           <div class="panel">
             <form id="formPredict" class="form" method="POST" action="/" enctype="multipart/form-data">
 
-              <!-- UPLOAD -->
               <div class="tabpane show" data-pane="upload">
                 <div class="dropzone" id="dropzone">
                   <input id="file" name="file" type="file" accept="image/png,image/jpeg,image/webp" hidden>
-
                   <div class="dropzone__icon">🖼️</div>
                   <div class="dropzone__title">{{ ui.dz_title }}</div>
                   <div class="dropzone__hint">{{ ui.dz_hint }}</div>
-
                   <button class="btn btn--secondary" type="button" id="btnPick">{{ ui.dz_pick }}</button>
                 </div>
 
@@ -86,14 +144,10 @@
 
                 <input type="hidden" name="lang" id="langHidden" value="{{ lang|default('es') }}">
 
-                <button class="btn btn--cta" type="submit">
-                  {{ ui.btn_analyze }}
-                </button>
-
+                <button class="btn btn--cta" type="submit">{{ ui.btn_analyze }}</button>
                 <p class="helper">{{ ui.formats_hint }}</p>
               </div>
 
-              <!-- INFO -->
               <div class="tabpane" data-pane="info">
                 <div class="infoBox">
                   <h3>{{ ui.info_title }}</h3>
@@ -106,7 +160,7 @@
             </form>
           </div>
 
-          <!-- Derecha: preview -->
+          <!-- Derecha -->
           <div class="panel">
             <div class="preview">
               <div class="preview__title">{{ ui.preview_title }}</div>
@@ -120,70 +174,359 @@
               <div class="filemeta" id="filemeta"></div>
             </div>
           </div>
-
         </div>
-        <!-- Resultados -->
-<div class="results">
-  <div class="results__header">
-    <h2>{{ ui.results_title }}</h2>
-  </div>
 
-  {% if error %}
-    <div class="resultBox mutedBox">❌ {{ error }}</div>
-  {% endif %}
+        <!-- Estado reentrenamiento -->
+        <div class="retrain-status" id="retrainStatus">
+          <h3>📊 Estado del Reentrenamiento</h3>
+          <div id="statusMessage">Cargando estado...</div>
 
-  {% if results and results|length > 0 %}
-    {% for r in results %}
-      <div class="resultBox" style="margin-top:12px;">
-        <div style="display:flex; gap:14px; align-items:flex-start; flex-wrap:wrap;">
+          <div id="progressContainer" style="display:none;">
+            <div class="progress-bar">
+              <div class="progress-bar-fill" id="progressBar"></div>
+            </div>
+            <div id="progressText" style="text-align:center;margin-top:8px;font-size:14px;"></div>
+          </div>
 
-          {% if r.ok %}
-            <img src="{{ r.image_url }}" alt="img"
-                 style="width:140px;height:140px;object-fit:cover;border-radius:14px;border:1px solid #e4e7ec;">
-          {% endif %}
+          <button class="retrain-btn" id="btnRetrain" disabled>🔄 Iniciar Reentrenamiento</button>
 
-          <div style="flex:1; min-width:260px;">
-            <div style="font-weight:900; margin-bottom:8px;">{{ r.filename }}</div>
-
-            {% if not r.ok %}
-              <div class="badge warn">⚠️ Error</div>
-              <p class="muted">{{ r.error }}</p>
-            {% else %}
-              <div class="badge {{ 'ok' if r.status == 'ok' else 'warn' }}">{{ r.badge_text }}</div>
-              <p><b>{{ r.seen_text }}</b> {{ r.final }}</p>
-
-              {# SOLO mostrar scores si NO es "none" #}
-              {% if r.status != "none" %}
-                <div class="scores">
-                  {% for k,v in r.probs.items() %}
-                    <div class="score">
-                      <div class="score__name">{{ k }}</div>
-                      <div class="score__bar">
-                        <span style="width: {{ (v*100)|round(2) }}%"></span>
-                      </div>
-                      <div class="score__val">{{ (v*100)|round(2) }}%</div>
-                    </div>
-                  {% endfor %}
-                </div>
-              {% endif %}
-
-            {% endif %}
+          <div class="correction-info">
+            <strong>💡 Información:</strong>
+            Se necesitan al menos <b><span id="thresholdText">--</span></b> correcciones para iniciar el reentrenamiento.
           </div>
         </div>
+
+        <!-- Resultados -->
+        <div class="results">
+          <div class="results__header">
+            <h2>{{ ui.results_title }}</h2>
+          </div>
+
+          {% if error %}
+            <div class="resultBox mutedBox">❌ {{ error }}</div>
+          {% endif %}
+
+          {% if results and results|length > 0 %}
+            {% for r in results %}
+              <div class="resultBox" style="margin-top:12px;">
+                <div style="display:flex; gap:14px; align-items:flex-start; flex-wrap:wrap;">
+
+                  {% if r.ok %}
+                    <img src="{{ r.image_url }}" alt="img"
+                         style="width:140px;height:140px;object-fit:cover;border-radius:14px;border:1px solid #e4e7ec;">
+                  {% endif %}
+
+                  <div style="flex:1; min-width:260px;">
+                    <div style="font-weight:900; margin-bottom:8px;">{{ r.filename }}</div>
+
+                    {% if not r.ok %}
+                      <div class="badge warn">⚠️ Error</div>
+                      <p class="muted">{{ r.error }}</p>
+                    {% else %}
+                      <div class="badge {{ 'ok' if r.status == 'ok' else 'warn' }}">{{ r.badge_text }}</div>
+                      <p><b>{{ r.seen_text }}</b> {{ r.final }}</p>
+
+                      {% if r.status != "none" and r.probs %}
+                        <div class="scores">
+                          {% for k,v in r.probs.items() %}
+                            {% set pct = (((v|float) * 100) | round(2)) %}
+                            <div class="score">
+                              <div class="score__name">{{ k }}</div>
+                              <div class="score__bar">
+                                <span style="width: {{ pct }}%;"></span>
+                              </div>
+                              <div class="score__val">{{ pct }}%</div>
+                            </div>
+                          {% endfor %}
+                        </div>
+                      {% endif %}
+
+                      <!-- ✅ Botón seguro SIN onclick -->
+                      <button class="correction-btn"
+                              type="button"
+                              data-image-url="{{ r.image_url }}"
+                              data-probs='{{ r.probs | tojson | safe }}'
+                              data-index="{{ loop.index }}">
+                        ✏️ Corregir Etiquetas
+                      </button>
+
+                      <div class="correction-success" id="success_{{ loop.index }}"></div>
+                      <div class="correction-error" id="error_{{ loop.index }}"></div>
+
+                    {% endif %}
+                  </div>
+                </div>
+              </div>
+            {% endfor %}
+          {% else %}
+            <div class="resultBox mutedBox">{{ ui.results_empty }}</div>
+          {% endif %}
+        </div>
+
       </div>
-    {% endfor %}
-  {% else %}
-    <div class="resultBox mutedBox">
-      {{ ui.results_empty }}
-    </div>
-  {% endif %}
-</div>
-
-
-        
+    </section>
   </main>
 
+  <!-- ✅ Modal (UNO SOLO) -->
+  <div class="modal" id="correctionModal" aria-hidden="true">
+    <div class="modal-content" role="dialog" aria-modal="true">
+      <h3 class="modal-title">✏️ Corregir Etiquetas</h3>
+      <p id="modalImageName" style="margin:0 0 10px;color:#6c757d;"></p>
+
+      <div class="checkbox-group" id="checkboxGroup"></div>
+
+      <div class="modal-buttons">
+        <button class="btn-modal btn-modal-cancel" type="button" id="btnCancelModal">Cancelar</button>
+        <button class="btn-modal btn-modal-submit" type="button" id="btnSaveModal">Guardar Corrección</button>
+      </div>
+    </div>
+  </div>
+
+
+
+
+
+
+
+
+
+
 <script>
+// ===== Estado modal =====
+let currentImageUrl = null;
+let currentResultIndex = null;
+
+const CLASSES = ["lacteos", "arroz", "frutas/verduras"];
+
+function openCorrectionModal(imageUrl, probs, idx) {
+  currentImageUrl = imageUrl;
+  currentResultIndex = idx;
+
+  const fileName = String(imageUrl).split("/").pop();
+  document.getElementById("modalImageName").textContent = `Imagen: ${fileName}`;
+
+  const group = document.getElementById("checkboxGroup");
+  group.innerHTML = "";
+
+  // ===== OPCIÓN "NO PERTENECE" =====
+  const noneDiv = document.createElement("div");
+  noneDiv.className = "checkbox-item";
+  noneDiv.innerHTML = `
+    <input type="checkbox" id="cls_none" value="none">
+    <label for="cls_none">
+      <strong>No pertenece</strong> - Esta imagen no es comida
+    </label>
+  `;
+  group.appendChild(noneDiv);
+
+  const noneInput = noneDiv.querySelector("#cls_none");
+
+  // click en toda la fila de "none"
+  noneDiv.addEventListener("click", (e) => {
+    if (e.target.tagName.toLowerCase() === "input") return;
+    noneInput.checked = !noneInput.checked;
+    noneInput.dispatchEvent(new Event("change"));
+  });
+
+  // si marca "none", desmarca todas las clases
+  noneInput.addEventListener("change", () => {
+    if (noneInput.checked) {
+      const allChecks = group.querySelectorAll(
+        'input[type="checkbox"]:not(#cls_none)'
+      );
+      allChecks.forEach((cb) => (cb.checked = false));
+    }
+  });
+
+  // ===== CHECKBOXES NORMALES =====
+  CLASSES.forEach((cls) => {
+    const safeId = cls.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const p = (probs && typeof probs === "object") ? (probs[cls] ?? 0) : 0;
+    const checked = p >= 0.5;
+
+    const row = document.createElement("div");
+    row.className = "checkbox-item";
+    row.innerHTML = `
+      <input type="checkbox" id="cls_${safeId}" value="${cls}" ${checked ? "checked" : ""}>
+      <label for="cls_${safeId}">
+        <strong>${cls}</strong> - Prob actual: ${(p * 100).toFixed(2)}%
+      </label>
+    `;
+
+    const input = row.querySelector("input");
+
+    // click en toda la fila
+    row.addEventListener("click", (e) => {
+      if (e.target.tagName.toLowerCase() === "input") return;
+      input.checked = !input.checked;
+      input.dispatchEvent(new Event("change"));
+    });
+
+    // si marca una clase, desmarca "none"
+    input.addEventListener("change", () => {
+      if (input.checked) noneInput.checked = false;
+    });
+
+    group.appendChild(row);
+  });
+
+  // ===== MOSTRAR MODAL =====
+  const modal = document.getElementById("correctionModal");
+  modal.classList.add("show");
+  modal.setAttribute("aria-hidden", "false");
+}
+
+// ===== CERRAR MODAL =====
+function closeCorrectionModal() {
+  const modal = document.getElementById("correctionModal");
+  modal.classList.remove("show");
+  modal.setAttribute("aria-hidden", "true");
+  currentImageUrl = null;
+  currentResultIndex = null;
+}
+
+// ===== ENVIAR CORRECCIÓN =====
+async function submitCorrection() {
+  const checked = document.querySelectorAll("#checkboxGroup input[type='checkbox']:checked");
+  const correctLabels = Array.from(checked).map(x => x.value);
+
+  if (!currentImageUrl) {
+    alert("No hay imagen seleccionada.");
+    return;
+  }
+
+  // ✅ ahora SÍ permite marcar "none" como única opción
+  if (correctLabels.length === 0) {
+    alert("⚠️ Selecciona al menos una etiqueta o 'No pertenece'.");
+    return;
+  }
+
+  const successDiv = document.getElementById(`success_${currentResultIndex}`);
+  const errorDiv = document.getElementById(`error_${currentResultIndex}`);
+
+  try {
+    const res = await fetch("/correct", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        image_url: currentImageUrl,
+        correct_labels: correctLabels
+      })
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (res.ok) {
+      if (errorDiv) { errorDiv.style.display = "none"; errorDiv.textContent = ""; }
+      if (successDiv) {
+        successDiv.textContent =
+          `✅ ${data.message || "Corrección guardada"} ` +
+          `(${data.pending_count ?? data.pending_corrections ?? 0}/${data.threshold ?? "--"})`;
+        successDiv.style.display = "block";
+        setTimeout(() => (successDiv.style.display = "none"), 5000);
+      }
+      closeCorrectionModal();
+      updateRetrainStatus();
+    } else {
+      if (successDiv) { successDiv.style.display = "none"; successDiv.textContent = ""; }
+      if (errorDiv) {
+        errorDiv.textContent = `❌ ${data.error || "No se pudo guardar"}`;
+        errorDiv.style.display = "block";
+        setTimeout(() => (errorDiv.style.display = "none"), 6000);
+      } else {
+        alert(data.error || "No se pudo guardar");
+      }
+    }
+  } catch (e) {
+    if (errorDiv) {
+      errorDiv.textContent = `❌ Error de conexión: ${e.message}`;
+      errorDiv.style.display = "block";
+    } else {
+      alert("Error de conexión: " + e.message);
+    }
+  }
+}
+
+
+
+
+  // ===== Bind de botones corregir =====
+  function bindCorrectionButtons() {
+    document.querySelectorAll(".correction-btn[data-image-url]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const imageUrl = btn.getAttribute("data-image-url");
+        const idx = parseInt(btn.getAttribute("data-index") || "0", 10);
+
+        let probs = {};
+        try { probs = JSON.parse(btn.getAttribute("data-probs") || "{}"); }
+        catch(e) { console.warn("data-probs inválido", e); }
+
+        openCorrectionModal(imageUrl, probs, idx);
+      });
+    });
+  }
+
+  // ===== Reentreno =====
+  async function updateRetrainStatus() {
+    try {
+      const res = await fetch("/retrain_status");
+      const data = await res.json();
+
+      const statusDiv = document.getElementById("statusMessage");
+      const btn = document.getElementById("btnRetrain");
+      const pc = document.getElementById("progressContainer");
+      const pb = document.getElementById("progressBar");
+      const pt = document.getElementById("progressText");
+      const tt = document.getElementById("thresholdText");
+
+      const pending = data.pending_count ?? 0;
+      const threshold = data.threshold ?? 1;
+      if (tt) tt.textContent = threshold;
+
+      pc.style.display = "none";
+
+      if (data.status === "in_progress") {
+        statusDiv.innerHTML = `<span class="status-badge in-progress">🔄 Reentrenando...</span><br><b>${data.message || ""}</b>`;
+        btn.disabled = true;
+        pc.style.display = "block";
+        pb.style.width = "35%";
+        pt.textContent = "Reentrenando...";
+      } else if (data.status === "completed") {
+        statusDiv.innerHTML = `<span class="status-badge completed">✅ Completado</span><br>${data.message || ""}`;
+        btn.disabled = false;
+        pc.style.display = "block";
+        pb.style.width = "100%";
+        pt.textContent = "¡Listo!";
+      } else {
+        const ready = !!data.ready_for_retrain;
+        statusDiv.innerHTML = `
+          <span class="status-badge ${ready ? "ready" : "idle"}">
+            ${ready ? "✅ Listo para reentrenar" : "⏳ Esperando correcciones"}
+          </span><br>
+          Correcciones pendientes: ${pending}/${threshold}
+        `;
+        btn.disabled = !ready;
+      }
+    } catch (e) {
+      console.warn("No se pudo obtener retrain_status", e);
+    }
+  }
+
+  async function triggerRetrain() {
+    if (!confirm("¿Iniciar reentrenamiento?")) return;
+    const res = await fetch("/trigger_retrain", { method:"POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) alert(data.error || "No se pudo iniciar");
+    else alert(data.message || "Iniciado");
+    updateRetrainStatus();
+  }
+
+  // ===== UI general =====
+  function startStatusPolling(){
+    updateRetrainStatus();
+    setInterval(updateRetrainStatus, 3000);
+  }
+
   // Tabs
   const tabs = document.querySelectorAll(".tab");
   const panes = document.querySelectorAll(".tabpane");
@@ -194,12 +537,12 @@
     panes.forEach(p => p.classList.toggle("show", p.dataset.pane === id));
   }));
 
-  // Idioma -> hidden
+  // Lang hidden
   const lang = document.getElementById("lang");
   const langHidden = document.getElementById("langHidden");
   lang.addEventListener("change", ()=> langHidden.value = lang.value);
 
-  // Dropzone + preview
+  // Dropzone preview
   const fileInput = document.getElementById("file");
   const btnPick = document.getElementById("btnPick");
   const dropzone = document.getElementById("dropzone");
@@ -217,19 +560,16 @@
     previewEmpty.style.display = "none";
     filemeta.textContent = `${file.name} • ${(file.size/1024/1024).toFixed(2)} MB`;
   }
-
   fileInput.addEventListener("change", e => setPreview(e.target.files[0]));
 
   ["dragenter","dragover"].forEach(evt => dropzone.addEventListener(evt, (e)=>{
     e.preventDefault(); e.stopPropagation();
     dropzone.classList.add("drag");
   }));
-
   ["dragleave","drop"].forEach(evt => dropzone.addEventListener(evt, (e)=>{
     e.preventDefault(); e.stopPropagation();
     dropzone.classList.remove("drag");
   }));
-
   dropzone.addEventListener("drop", (e)=>{
     const files = e.dataTransfer.files;
     if(!files || files.length === 0) return;
@@ -237,9 +577,8 @@
     setPreview(files[0]);
   });
 
-  // Single/Multi: cambia name + multiple (para que el backend reciba correcto)
+  // Single/Multi
   const radios = document.querySelectorAll('input[name="mode"]');
-
   function syncMultiple(){
     const mode = document.querySelector('input[name="mode"]:checked')?.value || "single";
     if(mode === "multi"){
@@ -252,6 +591,24 @@
   }
   radios.forEach(r=> r.addEventListener("change", syncMultiple));
   syncMultiple();
+
+  // Modal events
+  document.getElementById("btnCancelModal").addEventListener("click", closeCorrectionModal);
+  document.getElementById("btnSaveModal").addEventListener("click", submitCorrection);
+  document.getElementById("correctionModal").addEventListener("click", (e) => {
+    if (e.target.id === "correctionModal") closeCorrectionModal();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeCorrectionModal();
+  });
+
+  // Retrain click
+  document.getElementById("btnRetrain").addEventListener("click", triggerRetrain);
+
+  window.addEventListener("DOMContentLoaded", () => {
+    bindCorrectionButtons();
+    startStatusPolling();
+  });
 </script>
 
 </body>

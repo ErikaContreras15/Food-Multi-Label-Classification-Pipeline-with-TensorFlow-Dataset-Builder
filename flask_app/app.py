@@ -1,12 +1,20 @@
 import os
 import uuid
 import numpy as np
-from flask import Flask, render_template, request
+from threading import Thread
+
+from flask import Flask, render_template, request, jsonify
 from werkzeug.utils import secure_filename
 import tensorflow as tf
 
+from retrain_service import IncrementalRetrainer
+import os
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"  # 0=all, 1=INFO, 2=WARNING, 3=ERROR
+
+
 # ========= CONFIG =========
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))              
+PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, ".."))      
 
 MODEL_PATH = os.path.join(PROJECT_ROOT, "outputs", "model.keras")
 IMG_SIZE = (224, 224)
@@ -16,22 +24,35 @@ CLASSES = ["lacteos", "arroz", "frutas/verduras"]
 THRESH = 0.50
 NONE_IF_MAX_BELOW = 0.45
 
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "static", "uploads")
+UPLOAD_DIR = os.path.join(BASE_DIR, "static", "uploads")
 ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
+
+MAX_CONTENT_LENGTH = 12 * 1024 * 1024  # 12MB
+
+# ========= HELPERS =========
+def normalize_lang(lang: str) -> str:
+    lang = (lang or "es").lower().strip()
+    return "en" if lang.startswith("en") else "es"
+
+def allowed_file(filename: str) -> bool:
+    ext = os.path.splitext((filename or "").lower())[1]
+    return ext in ALLOWED_EXTS
+
+def load_img_for_model(path: str):
+    b = tf.io.read_file(path)
+    img = tf.image.decode_image(b, channels=3, expand_animations=False)
+    img = tf.image.resize(img, IMG_SIZE)
+    img = tf.cast(img, tf.float32) / 255.0
+    return tf.expand_dims(img, 0)
+
+# ========= FLASK APP =========
+app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
 
 # Crear carpeta uploads (y detectar si "uploads" es archivo)
 if os.path.exists(UPLOAD_DIR) and not os.path.isdir(UPLOAD_DIR):
     raise RuntimeError(f"❌ '{UPLOAD_DIR}' existe pero NO es carpeta. Borra ese archivo y crea una carpeta.")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 12 * 1024 * 1024  # 12MB
-
-print("✅ Cargando modelo desde:", MODEL_PATH)
-print("✅ Existe modelo?:", os.path.exists(MODEL_PATH))
-model = tf.keras.models.load_model(MODEL_PATH)
-print("✅ Modelo cargado OK")
-
 
 # ========= I18N =========
 I18N = {
@@ -143,72 +164,99 @@ I18N = {
     },
 }
 
-def normalize_lang(lang: str) -> str:
-    lang = (lang or "es").lower().strip()
-    return "en" if lang.startswith("en") else "es"
-
 def tr(lang: str, key: str, **kwargs) -> str:
     lang = normalize_lang(lang)
-    text = I18N[lang].get(key, key)
+    text = I18N.get(lang, I18N["es"]).get(key, key)
     try:
         return text.format(**kwargs)
     except Exception:
         return text
 
-
-def allowed_file(filename: str) -> bool:
-    ext = os.path.splitext(filename.lower())[1]
-    return ext in ALLOWED_EXTS
-
-
-def load_img_for_model(path: str):
-    b = tf.io.read_file(path)
-    img = tf.image.decode_image(b, channels=3, expand_animations=False)
-    img = tf.image.resize(img, IMG_SIZE)
-    img = tf.cast(img, tf.float32) / 255.0
-    return tf.expand_dims(img, 0)
-
+# ========= LOAD MODEL =========
+print("✅ Cargando modelo desde:", MODEL_PATH)
+print("✅ Existe modelo?:", os.path.exists(MODEL_PATH))
+model = tf.keras.models.load_model(MODEL_PATH)
+print("✅ Modelo cargado OK")
 
 def predict_one(image_path: str):
     x = load_img_for_model(image_path)
-    probs = model.predict(x, verbose=0)[0]  # (3,)
+
+    with model_lock:
+        probs = model.predict(x, verbose=0)[0]  # (3,)
 
     probs_dict = {c: float(p) for c, p in zip(CLASSES, probs)}
     labels = [c for c, p in zip(CLASSES, probs) if p >= THRESH]
 
     if not labels and float(np.max(probs)) < NONE_IF_MAX_BELOW:
-        final = "none"
         status = "none"
+        final = "none"
     elif not labels:
-        final = "uncertain"
         status = "uncertain"
+        final = "uncertain"
     else:
-        final = ", ".join(labels)
         status = "ok"
+        final = ", ".join(labels)
 
     return probs_dict, final, status
 
 
+import threading
+
+model_lock = threading.Lock()
+
+def reload_model():
+    global model
+    with model_lock:
+        print("🔄 Recargando modelo desde:", MODEL_PATH)
+        tf.keras.backend.clear_session()
+        model = tf.keras.models.load_model(MODEL_PATH)
+        print("✅ Modelo recargado")
+
+
+# ========= RETRAINER (ANTES DE RUTAS QUE LO USAN) =========
+#retrainer = IncrementalRetrainer(
+    #model_path=MODEL_PATH,
+    #corrections_dir=os.path.join(PROJECT_ROOT, "corrections"),
+    #project_root=PROJECT_ROOT
+#)
+
+# ========= RETRAINER (ANTES DE RUTAS QUE LO USAN) =========
+retrainer = IncrementalRetrainer(
+    model_path=MODEL_PATH,
+    corrections_dir=os.path.join(PROJECT_ROOT, "corrections"),
+    project_root=PROJECT_ROOT  # ✅ yo sí lo dejaría activo
+)
+
+# ✅ RESETEAR ESTADO AL INICIAR (para que no quede "Completado" de antes)
+try:
+    retrainer._write_status(
+        "idle",
+        f"Esperando correcciones... ({retrainer.get_pending_count()}/{retrainer.MIN_CORRECTIONS})"
+    )
+except Exception as e:
+    print("⚠️ No se pudo resetear retrain_status al iniciar:", e)
+
+
+
+
+# ========= RUTA PRINCIPAL =========
 @app.route("/", methods=["GET", "POST"])
 def index():
     results = []
     error = None
-
-    # idioma por defecto
     lang = "es"
 
     if request.method == "POST":
         lang = normalize_lang(request.form.get("lang", "es"))
         mode = request.form.get("mode", "single")  # single | multi
 
-        files = []
         if mode == "multi":
             files = request.files.getlist("images")
         else:
             f = request.files.get("file")
             files = [f] if f and f.filename else []
 
-        files = [f for f in files if f is not None and f.filename != ""]
+        files = [f for f in files if f is not None and f.filename]
 
         if not files:
             error = tr(lang, "err_no_file")
@@ -239,10 +287,9 @@ def index():
 
             probs_dict, final_key, status = predict_one(save_path)
 
-            # textos por idioma para badge/final
             if status == "ok":
                 badge_text = tr(lang, "badge_ok")
-                final_txt = final_key  # aquí ya es "lacteos, arroz..."
+                final_txt = final_key
             elif status == "uncertain":
                 badge_text = tr(lang, "badge_uncertain")
                 best = max(probs_dict, key=probs_dict.get)
@@ -273,6 +320,151 @@ def index():
         ui=I18N[normalize_lang(lang)],
     )
 
+# ========= ENDPOINT: GUARDAR CORRECCIÓN =========
+@app.route("/correct", methods=["POST"])
+def correct_labels():
+    """
+    Guarda una corrección del usuario para reentrenamiento.
+    Espera JSON: { image_url: "/static/uploads/xxx.jpg", correct_labels: ["lacteos", ...] }
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        image_url = data.get("image_url")
+        corrected_labels = data.get("correct_labels", [])
 
+        if not image_url:
+            return jsonify({"error": "URL de imagen requerida"}), 400
+
+        # Validar formato y convertir a path real
+        prefix = "/static/"
+        if not str(image_url).startswith(prefix):
+            return jsonify({"error": f"Formato de image_url inválido: {image_url}"}), 400
+
+        # Ej: "/static/uploads/abc.png" -> "uploads/abc.png"
+        relative = str(image_url)[len(prefix):]
+        image_path = os.path.normpath(os.path.join(BASE_DIR, "static", relative))
+
+        # Seguridad: evitar path traversal fuera de /static
+        static_root = os.path.normpath(os.path.join(BASE_DIR, "static"))
+        if not image_path.startswith(static_root):
+            return jsonify({"error": "Ruta inválida (path traversal)"}), 400
+
+        if not os.path.exists(image_path):
+            return jsonify({"error": f"Imagen no encontrada: {image_path}"}), 404
+
+        pending_count = retrainer.add_correction(image_path, corrected_labels)
+
+        return jsonify({
+            "status": "success",
+            "message": "✅ Corrección guardada exitosamente",
+            "pending_corrections": pending_count,
+            "pending_count": retrainer.get_pending_count(),  # por si tu UI usa pending_count
+            "ready_for_retrain": retrainer.should_retrain(),
+            "threshold": retrainer.MIN_CORRECTIONS
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ========= ENDPOINT: DISPARAR REENTRENAMIENTO =========
+@app.route("/trigger_retrain", methods=["POST"])
+def trigger_retrain():
+    """
+    Inicia reentrenamiento en background para no bloquear la UI.
+    """
+    try:
+        if not retrainer.should_retrain():
+            pending = retrainer.get_pending_count()
+            return jsonify({
+                "error": f"Necesitas al menos {retrainer.MIN_CORRECTIONS} correcciones para reentrenar",
+                "pending_corrections": pending,
+                "pending_count": pending,
+                "ready_for_retrain": False,
+                "threshold": retrainer.MIN_CORRECTIONS
+            }), 400
+
+        def run_retraining():
+            status_file = os.path.join(retrainer.corrections_dir, "retraining_status.txt")
+            try:
+                # (Opcional) marcar inicio explícito, por si tu status no lo hace aún
+                try:
+                    os.makedirs(retrainer.corrections_dir, exist_ok=True)
+                    with open(status_file, "w", encoding="utf-8") as f:
+                        f.write("🔄 REENTRENÁNDOSE...\nIniciando reentrenamiento en background...\n")
+                except Exception:
+                    pass
+
+                result = retrainer.incremental_finetune(epochs=3)
+                print(f"✅ Reentrenamiento completado: {result}")
+
+                # ✅ RECARGAR MODELO NUEVO EN FLASK (muy importante)
+                reload_model()
+
+            except Exception as e:
+                print(f"❌ Error en reentrenamiento: {e}")
+
+                # ✅ deja el error visible en /retrain_status
+                try:
+                    os.makedirs(retrainer.corrections_dir, exist_ok=True)
+                    with open(status_file, "w", encoding="utf-8") as f:
+                        f.write(f"❌ ERROR EN REENTRENAMIENTO\n{str(e)}\n")
+                except Exception:
+                    # si no se puede escribir el status, al menos no rompas
+                    pass
+
+        Thread(target=run_retraining, daemon=True).start()
+
+        return jsonify({
+            "status": "started",
+            "message": "🔄 Reentrenamiento iniciado en background",
+            "check_status_at": "/retrain_status"
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+
+# ========= ENDPOINT: ESTADO REENTRENAMIENTO =========
+@app.route("/retrain_status", methods=["GET"])
+def retrain_status():
+    try:
+        status = retrainer.get_retraining_status()
+
+        # Asegurar campos que tu frontend usa
+        if "pending_count" not in status:
+            status["pending_count"] = retrainer.get_pending_count()
+        if "threshold" not in status:
+            status["threshold"] = retrainer.MIN_CORRECTIONS
+        if "ready_for_retrain" not in status:
+            status["ready_for_retrain"] = retrainer.should_retrain()
+
+        return jsonify(status)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ========= HEALTHCHECK =========
+@app.route("/api/health", methods=["GET"])
+def api_health():
+    return jsonify({
+        "status": "ok",
+        "model_loaded": model is not None,
+        "pending_corrections": retrainer.get_pending_count(),
+        "ready_for_retrain": retrainer.should_retrain(),
+        "threshold": retrainer.MIN_CORRECTIONS
+    })
+
+# ========= RUN =========
 if __name__ == "__main__":
-    app.run(debug=True)
+    print("\n" + "=" * 60)
+    print("✅ SERVIDOR FLASK INICIADO")
+    print("=" * 60)
+    print("📊 Retrainer inicializado")
+    print(f"   Correcciones pendientes: {retrainer.get_pending_count()}")
+    print(f"   Umbral para reentrenar: {retrainer.MIN_CORRECTIONS}")
+    print(f"   Listo para reentrenar: {retrainer.should_retrain()}")
+    print("=" * 60)
+    print("🌐 Accede a: http://localhost:5000")
+    print("=" * 60 + "\n")
+
+    app.run(debug=True, host="0.0.0.0", port=5000)
