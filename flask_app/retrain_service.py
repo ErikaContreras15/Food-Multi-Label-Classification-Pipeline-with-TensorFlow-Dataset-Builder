@@ -1,10 +1,12 @@
 # retrain_service.py
 import os
 from datetime import datetime
-
+import mlflow
+import mlflow.keras
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+from pathlib import Path
 
 
 class IncrementalRetrainer:
@@ -16,24 +18,37 @@ class IncrementalRetrainer:
         dataset_labels_rel=os.path.join("dataset", "labels.csv"),
         dataset_images_rel=os.path.join("dataset", "images"),
     ):
-        # paths ABS
-        self.model_path = os.path.abspath(model_path)
-        self.corrections_dir = os.path.abspath(corrections_dir)
-
-        # root del proyecto (para encontrar dataset/labels.csv siempre)
         if project_root:
             self.project_root = os.path.abspath(project_root)
         else:
             self.project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-        self.dataset_labels_path = os.path.join(self.project_root, dataset_labels_rel)
-        self.dataset_images_dir = os.path.join(self.project_root, dataset_images_rel)
+        # 2) PATHS ANCLADOS A project_root 
+       
+        def _abs_in_root(p: str) -> str:
+            return p if os.path.isabs(p) else os.path.join(self.project_root, p)
 
+        self.model_path = _abs_in_root(model_path)
+        self.corrections_dir = _abs_in_root(corrections_dir)
+
+        self.dataset_labels_path = _abs_in_root(dataset_labels_rel)
+        self.dataset_images_dir = _abs_in_root(dataset_images_rel)
+
+        # 3) CONFIG GLOBAL
+      
         self.CLASSES = ["lacteos", "arroz", "frutas/verduras"]
-        self.MIN_CORRECTIONS = 1  # testing (sube a 10-20 cuando ya esté listo)
+        self.MIN_CORRECTIONS = 1
         self.IMG_SIZE = (224, 224)
         self.BATCH = 32
-
+        
+        # 4) MLFLOW ÚNICO EN RAÍZ
+        self.mlflow_experiment_name = "multilabel_real_leche_arroz_fruta"
+        root = Path(self.project_root).resolve()
+        mlflow_db_path = (root / "mlflow.db").resolve()
+        
+        mlflow.set_tracking_uri("sqlite:///" + str(mlflow_db_path).replace("\\", "/"))
+        mlflow.set_experiment(self.mlflow_experiment_name)
+    
         # dirs
         os.makedirs(self.corrections_dir, exist_ok=True)
         os.makedirs(os.path.join(self.corrections_dir, "history"), exist_ok=True)
@@ -119,7 +134,7 @@ class IncrementalRetrainer:
         return self.get_pending_count() >= self.MIN_CORRECTIONS
 
     # =========================
-    # Dataset tf.data (seguro)
+    # Dataset tf.data 
     # =========================
     def _make_incremental_ds(self, df: pd.DataFrame, training: bool):
         df = df.copy()
@@ -140,8 +155,6 @@ class IncrementalRetrainer:
             return img, label
 
         ds = ds.map(_load, num_parallel_calls=tf.data.AUTOTUNE)
-
-        # ✅ forma nueva (sin deprecated)
         ds = ds.ignore_errors()
 
         if training:
@@ -151,7 +164,7 @@ class IncrementalRetrainer:
         return ds
 
     # =========================
-    # Entrenamiento incremental
+    # Entrenamiento incremental CON MLFLOW CORREGIDO
     # =========================
     def incremental_finetune(self, epochs=3, boost_factor=25):
         """
@@ -159,6 +172,7 @@ class IncrementalRetrainer:
         - sample del dataset original
         - correcciones (con boost)
         - LR muy bajo (1e-5)
+        - ✅ REGISTRA MODELO CORRECTAMENTE EN MLFLOW
         """
 
         if not self.should_retrain():
@@ -174,9 +188,8 @@ class IncrementalRetrainer:
 
         print("🚀 INICIANDO REENTRENAMIENTO INCREMENTAL...")
         print("📊 Correcciones pendientes:", self.get_pending_count())
-        print("📁 labels.csv:", self.dataset_labels_path)
 
-        # 1) Dataset original
+        # === 1) Cargar datasets ===
         if not os.path.exists(self.dataset_labels_path):
             msg = f"❌ No existe labels.csv en:\n{self.dataset_labels_path}"
             self._write_status("error", msg)
@@ -189,7 +202,6 @@ class IncrementalRetrainer:
             self._write_status("error", msg)
             raise RuntimeError(f"Error cargando dataset original: {e}")
 
-        # validar columnas
         for c in ["filename"] + self.CLASSES:
             if c not in original_df.columns:
                 msg = f"❌ labels.csv no tiene columna requerida: {c}"
@@ -200,7 +212,6 @@ class IncrementalRetrainer:
             lambda f: os.path.join(self.dataset_images_dir, str(f))
         )
 
-        # 2) Correcciones
         try:
             corrections_df = pd.read_csv(self.pending_file)
         except Exception as e:
@@ -216,7 +227,6 @@ class IncrementalRetrainer:
             if c not in corrections_df.columns:
                 corrections_df[c] = 0
 
-        # ✅ Verificar existencia real de imágenes corregidas
         missing = corrections_df[~corrections_df["image_path"].apply(os.path.exists)]
         if len(missing) > 0:
             msg = (
@@ -228,119 +238,148 @@ class IncrementalRetrainer:
 
         print("✅ Todas las imágenes de corrección existen y se usarán.")
 
-        # 3) Mezcla + BOOST
-        sample_size = int(len(corrections_df) * 2.33)  # original ~70%
+        # === 2) Mezcla + BOOST ===
+        sample_size = int(len(corrections_df) * 2.33)
         original_sample = original_df.sample(
             n=min(sample_size, len(original_df)),
             random_state=42
         )
-
         corrections_boost = pd.concat([corrections_df] * int(boost_factor), ignore_index=True)
         mixed_df = pd.concat([original_sample, corrections_boost], ignore_index=True)
 
         print("📈 Dataset mezclado:", len(mixed_df))
-        print("   - Original:", len(original_sample))
-        print("   - Correcciones:", len(corrections_df), f"(boost x{boost_factor} => {len(corrections_boost)})")
-
         train_ds = self._make_incremental_ds(mixed_df, training=True)
-
-        # ✅ evitar "input ran out of data"
         train_ds = train_ds.repeat()
         steps_per_epoch = max(1, int(np.ceil(len(mixed_df) / self.BATCH)))
 
-        # 4) Cargar modelo
-        try:
-            model = tf.keras.models.load_model(self.model_path)
-        except Exception as e:
-            msg = f"❌ Error cargando modelo:\n{e}"
-            self._write_status("error", msg)
-            raise RuntimeError(f"Error cargando modelo: {e}")
-
-        model = self._unfreeze_conservative(model, n_layers=15)
-
-        model.compile(
-            optimizer=tf.keras.optimizers.Adam(1e-5),
-            loss="binary_crossentropy",
-            metrics=["binary_accuracy", tf.keras.metrics.AUC(name="auc")]
-        )
-
-        # 5) Callback status
-        class EpochTracker(tf.keras.callbacks.Callback):
-            def __init__(self, outer, total_epochs):
-                self.outer = outer
-                self.total_epochs = total_epochs
-
-            def on_epoch_begin(self, epoch, logs=None):
-                self.outer._write_status(
-                    "in_progress",
-                    f"🔄 Reentrenando...\nÉpoca {epoch+1}/{self.total_epochs}"
-                )
-                print(f"  ⏳ Época {epoch+1}/{self.total_epochs}...")
-
-        callbacks = [
-            EpochTracker(self, epochs),
-            tf.keras.callbacks.EarlyStopping(monitor="loss", patience=2, restore_best_weights=True),
-        ]
-
-        # 6) Entrenar
-        try:
-            history = model.fit(
-                train_ds,
-                epochs=epochs,
-                steps_per_epoch=steps_per_epoch,
-                callbacks=callbacks,
-                verbose=1
-            )
-        except Exception as e:
-            msg = f"❌ Error durante reentrenamiento:\n{e}"
-            self._write_status("error", msg)
-            raise RuntimeError(f"Error durante el reentrenamiento: {e}")
-
-        # 7) Guardar backup + nuevo modelo
+        # === 3) INICIAR RUN DE MLFLOW ===
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_path = self.model_path.replace(".keras", f"_backup_{timestamp}.keras")
+        run_name = f"retrain_{timestamp}"
+        
+        with mlflow.start_run(run_name=run_name) as run:
+            # Loggear parámetros
+            mlflow.log_params({
+                "epochs": epochs,
+                "boost_factor": boost_factor,
+                "learning_rate": 1e-5,
+                "batch_size": self.BATCH,
+                "corrections_used": len(corrections_df),
+                "original_sample_size": len(original_sample),
+                "total_training_samples": len(mixed_df),
+                "classes": self.CLASSES,
+                "stage": "incremental_retrain"
+            })
 
-        try:
+            # Cargar y preparar modelo
+            try:
+                model = tf.keras.models.load_model(self.model_path)
+            except Exception as e:
+                msg = f"❌ Error cargando modelo:\n{e}"
+                self._write_status("error", msg)
+                raise RuntimeError(f"Error cargando modelo: {e}")
+
+            model = self._unfreeze_conservative(model, n_layers=15)
+            model.compile(
+                optimizer=tf.keras.optimizers.Adam(1e-5),
+                loss="binary_crossentropy",
+                metrics=["binary_accuracy", tf.keras.metrics.AUC(name="auc")]
+            )
+
+            # Callback para métricas por época
+            class MLflowCallback(tf.keras.callbacks.Callback):
+                def on_epoch_end(self, epoch, logs=None):
+                    if logs:
+                        mlflow.log_metric("train_loss", logs.get("loss"), step=epoch)
+                        mlflow.log_metric("train_accuracy", logs.get("binary_accuracy"), step=epoch)
+                        mlflow.log_metric("train_auc", logs.get("auc"), step=epoch)
+
+            callbacks = [
+                MLflowCallback(),
+                tf.keras.callbacks.EarlyStopping(monitor="loss", patience=2, restore_best_weights=True),
+            ]
+
+            # ENTRENAR DENTRO del contexto MLflow
+            try:
+                history = model.fit(
+                    train_ds,
+                    epochs=epochs,
+                    steps_per_epoch=steps_per_epoch,
+                    callbacks=callbacks,
+                    verbose=1
+                )
+            except Exception as e:
+                msg = f"❌ Error durante reentrenamiento:\n{e}"
+                self._write_status("error", msg)
+                raise RuntimeError(f"Error durante el reentrenamiento: {e}")
+
+            # Loggear métricas FINALES
+            final_acc = float(history.history.get("binary_accuracy", [0])[-1])
+            final_loss = float(history.history.get("loss", [0])[-1])
+            final_auc = float(history.history.get("auc", [0])[-1])
+            
+            mlflow.log_metrics({
+                "final_accuracy": final_acc,
+                "final_loss": final_loss,
+                "final_auc": final_auc
+            })
+
+            # REGISTRAR MODELO (CORRECTO - con registered_model_name)
+            example_batch = next(iter(train_ds.take(1)))[0].numpy()[:1]
+            from mlflow.models.signature import infer_signature
+            signature = infer_signature(
+                example_batch,
+                model.predict(example_batch, verbose=0)
+            )
+            
+            mlflow.keras.log_model(
+                model,
+                artifact_path="model",
+                
+                registered_model_name="MultiLabelClassificationModel",  
+                signature=signature,
+                metadata={
+                    "task": "multi-label-classification",
+                    "classes": self.CLASSES,
+                    "corrections_used": len(corrections_df),
+                    "boost_factor": boost_factor
+                }
+            )
+
+            # Guardar en disco y artifacts
+            backup_path = self.model_path.replace(".keras", f"_backup_{timestamp}.keras")
             if os.path.exists(self.model_path):
                 os.rename(self.model_path, backup_path)
             model.save(self.model_path)
-        except Exception as e:
-            msg = f"❌ Error guardando modelo:\n{e}"
-            self._write_status("error", msg)
-            raise RuntimeError(f"Error guardando modelo: {e}")
-
-        # 8) Guardar history
-        try:
+            
+            mlflow.log_artifact(self.model_path, artifact_path="outputs")
+            mlflow.log_artifact(backup_path, artifact_path="outputs/backups")
+            
             hist_df = pd.DataFrame(history.history)
-            hist_df.to_csv(
-                os.path.join(self.corrections_dir, "history", f"retrain_{timestamp}.csv"),
-                index=False
-            )
-        except Exception:
-            pass
+            hist_csv_path = os.path.join(self.corrections_dir, "history", f"retrain_{timestamp}.csv")
+            hist_df.to_csv(hist_csv_path, index=False)
+            mlflow.log_artifact(hist_csv_path, artifact_path="training_history")
 
-        # 9) Limpiar pending
+        # === 4) Limpiar pending (FUERA del contexto MLflow) ===
         pd.DataFrame(
             columns=["timestamp", "image_path", "lacteos", "arroz", "frutas/verduras", "status"]
         ).to_csv(self.pending_file, index=False)
 
-        final_acc = float(history.history.get("binary_accuracy", [0])[-1])
         msg = (
-            "✅ MODELO REENTRENADO EXITOSAMENTE\n"
+            "✅ MODELO REENTRENADO Y REGISTRADO EN MLFLOW\n"
+            f"Run ID: {run.info.run_id}\n"
             f"Backup: {os.path.basename(backup_path)}\n"
             f"Correcciones usadas: {len(corrections_df)}\n"
-            f"Épocas: {epochs}\n"
             f"Precisión final: {final_acc:.2%}"
         )
         self._write_status("completed", msg)
 
         print("✅ REENTRENAMIENTO COMPLETADO")
-        print("   Backup:", backup_path)
-        print("   Precisión final:", f"{final_acc:.2%}")
+        print(f"   Run ID: {run.info.run_id}")
+        print(f"   Precisión final: {final_acc:.2%}")
 
         return {
             "status": "success",
-            "epochs": history.history,
+            "run_id": run.info.run_id,
             "backup_path": backup_path,
             "corrections_used": int(len(corrections_df)),
             "final_accuracy": final_acc,

@@ -1,15 +1,15 @@
 import os
 import uuid
 import numpy as np
-from threading import Thread
+from threading import Thread, Lock
+import mlflow  
 
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, redirect
 from werkzeug.utils import secure_filename
 import tensorflow as tf
 
 from retrain_service import IncrementalRetrainer
-import os
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"  # 0=all, 1=INFO, 2=WARNING, 3=ERROR
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"  
 
 
 # ========= CONFIG =========
@@ -71,6 +71,7 @@ I18N = {
 
         "tab_upload": "Subir imagen",
         "tab_info": "Información",
+        "tab_models": "Modelos MLflow",  # ✅ Nueva pestaña
 
         "lang_label": "Idioma del resultado",
         "lang_es": "Español",
@@ -124,6 +125,7 @@ I18N = {
 
         "tab_upload": "Upload image",
         "tab_info": "Info",
+        "tab_models": "MLflow Models",  # ✅ Nueva pestaña
 
         "lang_label": "Result language",
         "lang_es": "Español",
@@ -175,6 +177,7 @@ def tr(lang: str, key: str, **kwargs) -> str:
 # ========= LOAD MODEL =========
 print("✅ Cargando modelo desde:", MODEL_PATH)
 print("✅ Existe modelo?:", os.path.exists(MODEL_PATH))
+model_lock = Lock()
 model = tf.keras.models.load_model(MODEL_PATH)
 print("✅ Modelo cargado OK")
 
@@ -199,11 +202,6 @@ def predict_one(image_path: str):
 
     return probs_dict, final, status
 
-
-import threading
-
-model_lock = threading.Lock()
-
 def reload_model():
     global model
     with model_lock:
@@ -212,22 +210,14 @@ def reload_model():
         model = tf.keras.models.load_model(MODEL_PATH)
         print("✅ Modelo recargado")
 
-
-# ========= RETRAINER (ANTES DE RUTAS QUE LO USAN) =========
-#retrainer = IncrementalRetrainer(
-    #model_path=MODEL_PATH,
-    #corrections_dir=os.path.join(PROJECT_ROOT, "corrections"),
-    #project_root=PROJECT_ROOT
-#)
-
-# ========= RETRAINER (ANTES DE RUTAS QUE LO USAN) =========
+# ========= RETRAINER =========
 retrainer = IncrementalRetrainer(
     model_path=MODEL_PATH,
     corrections_dir=os.path.join(PROJECT_ROOT, "corrections"),
-    project_root=PROJECT_ROOT  # ✅ yo sí lo dejaría activo
+    project_root=PROJECT_ROOT
 )
 
-# ✅ RESETEAR ESTADO AL INICIAR (para que no quede "Completado" de antes)
+# ✅ RESETEAR ESTADO AL INICIAR
 try:
     retrainer._write_status(
         "idle",
@@ -236,10 +226,7 @@ try:
 except Exception as e:
     print("⚠️ No se pudo resetear retrain_status al iniciar:", e)
 
-
-
-
-# ========= RUTA PRINCIPAL =========
+# ========= RUTAS =========
 @app.route("/", methods=["GET", "POST"])
 def index():
     results = []
@@ -320,7 +307,6 @@ def index():
         ui=I18N[normalize_lang(lang)],
     )
 
-# ========= ENDPOINT: GUARDAR CORRECCIÓN =========
 @app.route("/correct", methods=["POST"])
 def correct_labels():
     """
@@ -358,7 +344,7 @@ def correct_labels():
             "status": "success",
             "message": "✅ Corrección guardada exitosamente",
             "pending_corrections": pending_count,
-            "pending_count": retrainer.get_pending_count(),  # por si tu UI usa pending_count
+            "pending_count": retrainer.get_pending_count(),
             "ready_for_retrain": retrainer.should_retrain(),
             "threshold": retrainer.MIN_CORRECTIONS
         })
@@ -366,7 +352,6 @@ def correct_labels():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# ========= ENDPOINT: DISPARAR REENTRENAMIENTO =========
 @app.route("/trigger_retrain", methods=["POST"])
 def trigger_retrain():
     """
@@ -384,32 +369,21 @@ def trigger_retrain():
             }), 400
 
         def run_retraining():
-            status_file = os.path.join(retrainer.corrections_dir, "retraining_status.txt")
+            
             try:
-                # (Opcional) marcar inicio explícito, por si tu status no lo hace aún
-                try:
-                    os.makedirs(retrainer.corrections_dir, exist_ok=True)
-                    with open(status_file, "w", encoding="utf-8") as f:
-                        f.write("🔄 REENTRENÁNDOSE...\nIniciando reentrenamiento en background...\n")
-                except Exception:
-                    pass
-
+                
                 result = retrainer.incremental_finetune(epochs=3)
                 print(f"✅ Reentrenamiento completado: {result}")
 
-                # ✅ RECARGAR MODELO NUEVO EN FLASK (muy importante)
+                # RECARGAR MODELO NUEVO EN FLASK
                 reload_model()
 
             except Exception as e:
                 print(f"❌ Error en reentrenamiento: {e}")
-
-                # ✅ deja el error visible en /retrain_status
+                # ✅ Guardar error usando el método del retrainer 
                 try:
-                    os.makedirs(retrainer.corrections_dir, exist_ok=True)
-                    with open(status_file, "w", encoding="utf-8") as f:
-                        f.write(f"❌ ERROR EN REENTRENAMIENTO\n{str(e)}\n")
+                    retrainer._write_status("error", f"❌ ERROR: {str(e)}")
                 except Exception:
-                    # si no se puede escribir el status, al menos no rompas
                     pass
 
         Thread(target=run_retraining, daemon=True).start()
@@ -422,28 +396,17 @@ def trigger_retrain():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
 
 
-
-# ========= ENDPOINT: ESTADO REENTRENAMIENTO =========
 @app.route("/retrain_status", methods=["GET"])
 def retrain_status():
     try:
         status = retrainer.get_retraining_status()
-
-        # Asegurar campos que tu frontend usa
-        if "pending_count" not in status:
-            status["pending_count"] = retrainer.get_pending_count()
-        if "threshold" not in status:
-            status["threshold"] = retrainer.MIN_CORRECTIONS
-        if "ready_for_retrain" not in status:
-            status["ready_for_retrain"] = retrainer.should_retrain()
-
         return jsonify(status)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# ========= HEALTHCHECK =========
 @app.route("/api/health", methods=["GET"])
 def api_health():
     return jsonify({
@@ -453,6 +416,40 @@ def api_health():
         "ready_for_retrain": retrainer.should_retrain(),
         "threshold": retrainer.MIN_CORRECTIONS
     })
+
+# RUTA PARA VER MODELOS REGISTRADOS EN MLFLOW 
+@app.route("/models")
+def list_models():
+    try:
+        
+        mlflow_db = os.path.join(PROJECT_ROOT, "mlflow.db")
+        mlflow.set_tracking_uri("sqlite:///" + mlflow_db.replace("\\", "/"))
+
+        client = mlflow.tracking.MlflowClient()
+        models = client.search_registered_models()
+        
+        model_list = []
+        for model in models:
+            versions = client.get_latest_versions(model.name)
+            for version in versions:
+                model_list.append({
+                    "name": model.name,
+                    "version": version.version,
+                    "status": version.status,
+                    "run_id": version.run_id,
+                    "creation_timestamp": version.creation_timestamp,
+                    "last_updated_timestamp": version.last_updated_timestamp
+                })
+        
+        return render_template('models.html', models=model_list)
+    except Exception as e:
+        return jsonify({"error": f"No se pudieron cargar modelos de MLflow: {str(e)}"}), 500
+
+# ✅ REDIRECCIÓN A MLFLOW UI EXTERNA (conveniencia)
+@app.route("/mlflow-ui")
+def mlflow_redirect():
+    return redirect("http://localhost:5000", code=302)  # MLflow UI corre en puerto 5000 por defecto
+
 
 # ========= RUN =========
 if __name__ == "__main__":
@@ -464,7 +461,9 @@ if __name__ == "__main__":
     print(f"   Umbral para reentrenar: {retrainer.MIN_CORRECTIONS}")
     print(f"   Listo para reentrenar: {retrainer.should_retrain()}")
     print("=" * 60)
-    print("🌐 Accede a: http://localhost:5000")
+    print("🌐 Tu app: http://localhost:5001")
+    print("📊 MLflow UI: http://localhost:5000 (ejecuta: mlflow ui --backend-store-uri sqlite:///mlflow.db)")
     print("=" * 60 + "\n")
 
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    
+    app.run(debug=True, host="0.0.0.0", port=5001, use_reloader=False)
