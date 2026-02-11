@@ -413,18 +413,6 @@ This project demonstrates key concepts in modern deep learning:
 
 ---
 
-## Why Multilabel Matters
-
-Unlike traditional multiclass classification (one label per image), **multilabel classification** is essential for real-world scenarios where:
-
-- A single image may contain **multiple food items**
-- The model must recognize **combinations** (e.g., dairy + rice in the same meal)
-- The model must correctly **reject** images that contain no relevant classes
-
-This approach mirrors how humans perceive food - rarely do we see isolated ingredients; instead, we see complete dishes with multiple components.
-
----
-
 ## Future Improvements
 
 - **Expand classes**: Add more food categories
