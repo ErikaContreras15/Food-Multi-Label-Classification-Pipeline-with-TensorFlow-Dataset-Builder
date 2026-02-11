@@ -381,59 +381,8 @@ This pipeline can be adapted for various practical use cases:
 
 ---
 
-## Educational Value
-
-This project demonstrates key concepts in modern deep learning:
-
-| Concept | Implementation |
-|---------|----------------|
-| **Transfer Learning** | Using pretrained MobileNetV2 as feature extractor |
-| **Multilabel Classification** | Sigmoid outputs with binary cross-entropy loss |
-| **Data Augmentation** | Collage generation to simulate complex scenarios |
-| **Negative Sampling** | Including non-food images to reduce false positives |
-| **Experiment Tracking** | MLflow for reproducible ML experiments |
-| **Model Deployment** | Flask web application for inference |
-| **Two-Stage Training** | Head training + fine-tuning strategy |
-| **Incremental Learning** | User feedback loop with conservative retraining |
-| **Active Learning** | Collecting corrections on difficult examples |
-
----
-
-## Technical Achievements
-
-| Metric | Value |
-|--------|-------|
-| **Validation Accuracy** | 95.43% |
-| **Validation AUC** | 0.9915 |
-| **Model Size** | ~8.6 MB (MobileNetV2) |
-| **Inference Time** | < 100ms (CPU) |
-| **Inference Ready** | Yes (Keras .keras format) |
-| **Web Deployment** | Flask application included |
-| **Incremental Learning** | Automated retraining system |
-
----
-
-## Future Improvements
-
-- **Expand classes**: Add more food categories
-- **Object detection**: Integrate YOLO for localization
-- **Model optimization**: Quantization for mobile deployment
-- **Database backend**: Replace CSV with proper database
-- **Queue system**: Use Celery for async retraining
-- **A/B testing**: Compare model versions in production
-- **Grad-CAM visualization**: Show what the model is looking at
-
----
-
 ## License
 
 This project is developed as part of academic research at Universidad Politecnica Salesiana.
 
 ---
-
-## Authors
-
-- **Erika Contreras**
-- **Alexander Chuquipoma**
-
-**Institution:** Universidad Politecnica Salesiana
